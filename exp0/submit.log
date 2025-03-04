@@ -1,0 +1,39 @@
+g++ openmp_pow.cpp -O3 -std=c++11 -fopenmp -o openmp_pow
+mpicxx mpi_pow.cpp -O3 -std=c++11 -o mpi_pow
+openmp_pow: n = 112000, m = 100000, thread_count = 1
+Congratulations!
+Time Cost: 14005383 us
+
+openmp_pow: n = 112000, m = 100000, thread_count = 7
+Congratulations!
+Time Cost: 2011009 us
+
+openmp_pow: n = 112000, m = 100000, thread_count = 14
+Congratulations!
+Time Cost: 1021626 us
+
+openmp_pow: n = 112000, m = 100000, thread_count = 28
+Congratulations!
+Time Cost: 510356 us
+
+mpi_pow: n = 112000, m = 100000, process_count = 1
+Congratulations!
+Time Cost: 14014714 us
+
+mpi_pow: n = 112000, m = 100000, process_count = 7
+Congratulations!
+Time Cost: 2016049 us
+
+mpi_pow: n = 112000, m = 100000, process_count = 14
+Congratulations!
+Time Cost: 1025108 us
+
+mpi_pow: n = 112000, m = 100000, process_count = 28
+Congratulations!
+Time Cost: 504580 us
+
+mpi_pow: n = 112000, m = 100000, process_count = 56
+Congratulations!
+Time Cost: 351082 us
+
+All done!
