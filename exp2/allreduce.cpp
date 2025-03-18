@@ -12,7 +12,43 @@ namespace ch = std::chrono;
 
 void Ring_Allreduce(void* sendbuf, void* recvbuf, int n, MPI_Comm comm, int comm_sz, int my_rank)
 {
-    //TODO
+    MPI_Request req;
+    int chunk = n / comm_sz;
+    int left = (my_rank - 1 + comm_sz) % comm_sz;
+    int right = (my_rank + 1) % comm_sz;
+    int offset = my_rank * chunk;
+
+    // Phase 1: Scatter-Reduce
+    for (int i = 0; i < comm_sz; i++)
+    {
+        if (i != 0) {
+            MPI_Recv((float*)recvbuf + offset, chunk, MPI_FLOAT, left, i - 1, comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req, MPI_STATUS_IGNORE);
+        }
+        for (int j = 0; j < chunk; j++) {
+            if (i == 0)
+                ((float*)recvbuf)[offset + j] = ((float*)sendbuf)[offset + j];
+            else
+                ((float*)recvbuf)[offset + j] += ((float*)sendbuf)[offset + j];
+        }
+        if (i != comm_sz - 1) {
+            MPI_Isend((float*)recvbuf + offset, chunk, MPI_FLOAT, right, i, comm, &req);
+            offset < chunk ? offset = n - chunk : offset -= chunk;
+        }
+    }
+
+    // Phase 2: Allgather
+    for (int i = 0; i < comm_sz; i++)
+    {
+        if (i != 0) {
+            MPI_Recv((float*)recvbuf + offset, chunk, MPI_FLOAT, left, i - 1, comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req, MPI_STATUS_IGNORE);
+        }
+        if (i != comm_sz - 1) {
+            MPI_Isend((float*)recvbuf + offset, chunk, MPI_FLOAT, right, i, comm, &req);
+            offset < chunk ? offset = n - chunk : offset -= chunk;
+        }
+    }
 }
 
 
