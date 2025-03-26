@@ -1,0 +1,18 @@
+Sort uniform parts: 1852.33 ms
+Sort random parts: 3797.51 ms
+
+#pragma omp parallel for
+Sort uniform parts: 71.6435 ms
+Sort random parts: 189.68 ms
+
+#pragma omp parallel for schedule(static)
+Sort uniform parts: 67.9934 ms
+Sort random parts: 190.335 ms
+
+#pragma omp parallel for schedule(dynamic)
+Sort uniform parts: 84.0829 ms
+Sort random parts: 171.721 ms
+
+#pragma omp parallel for schedule(guided)
+Sort uniform parts: 69.2433 ms
+Sort random parts: 163.531 ms
