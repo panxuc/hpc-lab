@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -7,7 +8,51 @@
 
 #include "worker.h"
 
-void mergeArrays(const float* arr1, int len1, const float* arr2, int len2, float* out) {
+void radixSort(float *arr, int len) {
+  const int RADIX = 256;
+  uint32_t *src = new uint32_t[len];
+  uint32_t *buf = new uint32_t[len];
+
+  for (int i = 0; i < len; i++) {
+    uint32_t x;
+    std::memcpy(&x, &arr[i], sizeof(float));
+    src[i] = (x & 0x80000000) ? ~x : (x ^ 0x80000000);
+  }
+
+  for (int pass = 0; pass < 4; pass++) {
+    int count[RADIX] = {0};
+    int shift = pass * 8;
+
+    for (int i = 0; i < len; i++) {
+      int bucket = (src[i] >> shift) & 0xFF;
+      count[bucket]++;
+    }
+    int total = 0;
+    for (int i = 0; i < RADIX; i++) {
+      int oldCount = count[i];
+      count[i] = total;
+      total += oldCount;
+    }
+    for (int i = 0; i < len; i++) {
+      int bucket = (src[i] >> shift) & 0xFF;
+      buf[count[bucket]++] = src[i];
+    }
+    std::swap(src, buf);
+  }
+
+  for (int i = 0; i < len; i++) {
+    uint32_t x = src[i];
+    uint32_t y = (x & 0x80000000) ? (x ^ 0x80000000) : ~x;
+    float f;
+    std::memcpy(&f, &y, sizeof(float));
+    arr[i] = f;
+  }
+
+  delete[] src;
+  delete[] buf;
+}
+
+void mergeArrays(const float *arr1, int len1, const float *arr2, int len2, float *out) {
   int i = 0, j = 0, k = 0;
   while (i < len1 && j < len2) {
     if (arr1[i] <= arr2[j]) {
@@ -16,11 +61,11 @@ void mergeArrays(const float* arr1, int len1, const float* arr2, int len2, float
       out[k++] = arr2[j++];
     }
   }
-  while (i < len1) {
-    out[k++] = arr1[i++];
+  if (i < len1) {
+    std::memcpy(out + k, arr1 + i, (len1 - i) * sizeof(float));
   }
-  while (j < len2) {
-    out[k++] = arr2[j++];
+  if (j < len2) {
+    std::memcpy(out + k, arr2 + j, (len2 - j) * sizeof(float));
   }
 }
 
@@ -29,7 +74,11 @@ void Worker::sort() {
   // you can use variables in class Worker: n, nprocs, rank, block_len, data
   if (out_of_range)
     return;
-  std::sort(data, data + block_len);
+  if (block_len < 100) {
+    std::sort(data, data + block_len);
+  } else {
+    radixSort(data, block_len);
+  }
   if (nprocs == 1)
     return;
 
