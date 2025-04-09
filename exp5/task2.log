@@ -1,0 +1,7 @@
+icpc aplusb-baseline.cpp -c -o aplusb-baseline.o -g
+icpc aplusb-autosimd.cpp -c -o aplusb-autosimd.o -g -xhost
+icpc aplusb-intrinsic.cpp -c -o aplusb-intrinsic.o -g -xhost
+icpc -std=c++17 aplusb.cpp aplusb-baseline.o aplusb-autosimd.o aplusb-intrinsic.o -o aplusb -g -xhost
+baseline: 4437 us
+auto simd: 526 us
+intrinsic: 526 us
