@@ -52,20 +52,19 @@ void radixSort(float *arr, int len) {
   delete[] buf;
 }
 
-void mergeArrays(const float *arr1, int len1, const float *arr2, int len2, float *out) {
-  int i = 0, j = 0, k = 0;
-  while (i < len1 && j < len2) {
-    if (arr1[i] <= arr2[j]) {
-      out[k++] = arr1[i++];
-    } else {
-      out[k++] = arr2[j++];
+void mergeArrays(float *arr1, int len1, float *arr2, int len2, float *out) {
+  float *end1 = arr1 + len1;
+  float *end2 = arr2 + len2;
+  while (true) {
+    if (arr1 == end1) {
+      memcpy(out, arr2, sizeof(float) * (end2 - arr2));
+      return;
     }
-  }
-  if (i < len1) {
-    std::memcpy(out + k, arr1 + i, (len1 - i) * sizeof(float));
-  }
-  if (j < len2) {
-    std::memcpy(out + k, arr2 + j, (len2 - j) * sizeof(float));
+    if (arr2 == end2) {
+      memcpy(out, arr1, sizeof(float) * (end1 - arr1));
+      return;
+    }
+    *out++ = (*arr2 < *arr1) ? *arr2++ : *arr1++;
   }
 }
 
@@ -83,8 +82,11 @@ void Worker::sort() {
     return;
 
   int rounds = nprocs;
-  float* partnerBuffer = new float[block_len];
-  float* mergedBuffer  = new float[block_len * 2];
+  float *partnerBuffer = new float[block_len];
+  float *mergedBuffer = new float[block_len * 2];
+
+  MPI_Request request;
+  MPI_Status status;
 
   for (int round = 0; round < rounds; round++) {
     int partner = -1;
@@ -99,15 +101,16 @@ void Worker::sort() {
       else
         partner = rank + 1;
     }
-    
+
     if (partner < 0 || partner >= nprocs) {
       continue;
     }
 
-    MPI_Status status;
-    MPI_Sendrecv(data, block_len, MPI_FLOAT, partner, round,
-                 partnerBuffer, block_len, MPI_FLOAT, partner, round,
-                 MPI_COMM_WORLD, &status);
+    MPI_Isend(data, block_len, MPI_FLOAT, partner, round, MPI_COMM_WORLD,
+              &request);
+    MPI_Recv(partnerBuffer, block_len, MPI_FLOAT, partner, round,
+             MPI_COMM_WORLD, &status);
+    MPI_Wait(&request, &status);
 
     mergeArrays(data, block_len, partnerBuffer, block_len, mergedBuffer);
 
@@ -118,6 +121,6 @@ void Worker::sort() {
     }
   }
 
-  delete[] partnerBuffer;
-  delete[] mergedBuffer;
+  free(partnerBuffer);
+  free(mergedBuffer);
 }
