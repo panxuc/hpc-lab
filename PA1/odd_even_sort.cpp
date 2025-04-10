@@ -57,11 +57,11 @@ void mergeArrays(float *arr1, int len1, float *arr2, int len2, float *out) {
   float *end2 = arr2 + len2;
   while (true) {
     if (arr1 == end1) {
-      memcpy(out, arr2, sizeof(float) * (end2 - arr2));
+      std::memcpy(out, arr2, sizeof(float) * (end2 - arr2));
       return;
     }
     if (arr2 == end2) {
-      memcpy(out, arr1, sizeof(float) * (end1 - arr1));
+      std::memcpy(out, arr1, sizeof(float) * (end1 - arr1));
       return;
     }
     *out++ = (*arr2 < *arr1) ? *arr2++ : *arr1++;
@@ -81,46 +81,46 @@ void Worker::sort() {
   if (nprocs == 1)
     return;
 
-  int rounds = nprocs;
-  float *partnerBuffer = new float[block_len];
-  float *mergedBuffer = new float[block_len * 2];
-
+  size_t block_size = ceiling(n, nprocs);
+  const int len1 = (block_len + 1) / 2;
+  const int len2 = block_size / 2;
+  const int sz = block_size % 2 ? nprocs + nprocs / 2 : nprocs;
+  int left = rank - 1;
+  int right = rank + 1;
+  float *recvbuf = new float[len2];
+  float *sendbuf = new float[len1 + len2];
   MPI_Request request;
-  MPI_Status status;
-
-  for (int round = 0; round < rounds; round++) {
-    int partner = -1;
-    if (round % 2 == 0) {
-      if (rank % 2 == 0)
-        partner = rank + 1;
-      else
-        partner = rank - 1;
+  for (int i = 0; i < sz; i++) {
+    if (!rank) {
+      // first rank
+      MPI_Isend(data + len1, len2, MPI_FLOAT, right, rank, MPI_COMM_WORLD,
+                &request);
+      mergeArrays(data, len1, nullptr, 0, sendbuf + len2);
+      MPI_Recv(recvbuf, len2, MPI_FLOAT, right, right, MPI_COMM_WORLD,
+               MPI_STATUS_IGNORE);
+    } else if (last_rank) {
+      // last rank
+      MPI_Recv(recvbuf, len2, MPI_FLOAT, left, left, MPI_COMM_WORLD,
+               MPI_STATUS_IGNORE);
+      mergeArrays(recvbuf, len2, data, len1, sendbuf);
+      MPI_Isend(sendbuf, len2, MPI_FLOAT, left, rank, MPI_COMM_WORLD, &request);
+      mergeArrays(data + len1, block_len - len1, nullptr, 0, recvbuf);
     } else {
-      if (rank % 2 == 0)
-        partner = rank - 1;
-      else
-        partner = rank + 1;
+      // middle ranks
+      MPI_Isend(data + len1, len2, MPI_FLOAT, right, rank, MPI_COMM_WORLD,
+                &request);
+      MPI_Recv(recvbuf, len2, MPI_FLOAT, left, left, MPI_COMM_WORLD,
+               MPI_STATUS_IGNORE);
+      mergeArrays(recvbuf, len2, data, len1, sendbuf);
+      MPI_Wait(&request, MPI_STATUS_IGNORE);
+      MPI_Isend(sendbuf, len2, MPI_FLOAT, left, rank, MPI_COMM_WORLD, &request);
+      MPI_Recv(recvbuf, len2, MPI_FLOAT, right, right, MPI_COMM_WORLD,
+               MPI_STATUS_IGNORE);
     }
-
-    if (partner < 0 || partner >= nprocs) {
-      continue;
-    }
-
-    MPI_Isend(data, block_len, MPI_FLOAT, partner, round, MPI_COMM_WORLD,
-              &request);
-    MPI_Recv(partnerBuffer, block_len, MPI_FLOAT, partner, round,
-             MPI_COMM_WORLD, &status);
-    MPI_Wait(&request, &status);
-
-    mergeArrays(data, block_len, partnerBuffer, block_len, mergedBuffer);
-
-    if (rank < partner) {
-      std::memcpy(data, mergedBuffer, block_len * sizeof(float));
-    } else {
-      std::memcpy(data, mergedBuffer + block_len, block_len * sizeof(float));
-    }
+    mergeArrays(sendbuf + len2, len1, recvbuf, block_len - len1, data);
+    MPI_Wait(&request, MPI_STATUS_IGNORE);
   }
 
-  free(partnerBuffer);
-  free(mergedBuffer);
+  delete[] recvbuf;
+  delete[] sendbuf;
 }
