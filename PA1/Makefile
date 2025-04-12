@@ -1,5 +1,5 @@
 # CFLAGS ?= -std=c++14 -O2 -Wall -Wextra -Werror -Wno-cast-function-type -pedantic -DDEBUG
-CFLAGS ?= -std=c++14 -O2 -Wall -Wextra -Wno-cast-function-type -pedantic
+CFLAGS ?= -std=c++14 -O3 -Wall -Wextra -Wno-cast-function-type -pedantic -march=native -ffast-math -funroll-loops
 
 .PHONY: clean check_mpi
 

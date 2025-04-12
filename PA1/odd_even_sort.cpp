@@ -89,36 +89,27 @@ void Worker::sort() {
   int right = rank + 1;
   float *recvbuf = new float[len2];
   float *sendbuf = new float[len1 + len2];
-  MPI_Request request;
+
   for (int i = 0; i < sz; i++) {
     if (!rank) {
       // first rank
-      MPI_Isend(data + len1, len2, MPI_FLOAT, right, rank, MPI_COMM_WORLD,
-                &request);
-      mergeArrays(data, len1, nullptr, 0, sendbuf + len2);
-      MPI_Recv(recvbuf, len2, MPI_FLOAT, right, right, MPI_COMM_WORLD,
-               MPI_STATUS_IGNORE);
+      std::memcpy(sendbuf + len2, data, sizeof(float) * len1);
+      MPI_Sendrecv(data + len1, len2, MPI_FLOAT, right, rank, recvbuf, len2,
+                   MPI_FLOAT, right, right, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     } else if (last_rank) {
       // last rank
-      MPI_Recv(recvbuf, len2, MPI_FLOAT, left, left, MPI_COMM_WORLD,
-               MPI_STATUS_IGNORE);
+      MPI_Sendrecv(data, len1, MPI_FLOAT, left, rank, recvbuf, len2, MPI_FLOAT,
+                   left, left, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       mergeArrays(recvbuf, len2, data, len1, sendbuf);
-      MPI_Isend(sendbuf, len2, MPI_FLOAT, left, rank, MPI_COMM_WORLD, &request);
-      mergeArrays(data + len1, block_len - len1, nullptr, 0, recvbuf);
     } else {
       // middle ranks
-      MPI_Isend(data + len1, len2, MPI_FLOAT, right, rank, MPI_COMM_WORLD,
-                &request);
-      MPI_Recv(recvbuf, len2, MPI_FLOAT, left, left, MPI_COMM_WORLD,
-               MPI_STATUS_IGNORE);
+      MPI_Sendrecv(data + len1, len2, MPI_FLOAT, right, rank, recvbuf, len2,
+                   MPI_FLOAT, left, left, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       mergeArrays(recvbuf, len2, data, len1, sendbuf);
-      MPI_Wait(&request, MPI_STATUS_IGNORE);
-      MPI_Isend(sendbuf, len2, MPI_FLOAT, left, rank, MPI_COMM_WORLD, &request);
-      MPI_Recv(recvbuf, len2, MPI_FLOAT, right, right, MPI_COMM_WORLD,
-               MPI_STATUS_IGNORE);
+      MPI_Sendrecv(sendbuf, len2, MPI_FLOAT, left, rank, recvbuf, len2,
+                   MPI_FLOAT, right, right, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
     mergeArrays(sendbuf + len2, len1, recvbuf, block_len - len1, data);
-    MPI_Wait(&request, MPI_STATUS_IGNORE);
   }
 
   delete[] recvbuf;
