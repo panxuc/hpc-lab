@@ -98,9 +98,11 @@ void Worker::sort() {
                    MPI_FLOAT, right, right, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     } else if (last_rank) {
       // last rank
-      MPI_Sendrecv(data, len1, MPI_FLOAT, left, rank, recvbuf, len2, MPI_FLOAT,
-                   left, left, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      MPI_Recv(recvbuf, len2, MPI_FLOAT, left, left, MPI_COMM_WORLD,
+               MPI_STATUS_IGNORE);
       mergeArrays(recvbuf, len2, data, len1, sendbuf);
+      MPI_Send(sendbuf, len2, MPI_FLOAT, left, rank, MPI_COMM_WORLD);
+      std::memcpy(recvbuf, data + len1, sizeof(float) * (block_len - len1));
     } else {
       // middle ranks
       MPI_Sendrecv(data + len1, len2, MPI_FLOAT, right, rank, recvbuf, len2,
