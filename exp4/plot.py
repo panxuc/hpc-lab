@@ -47,10 +47,10 @@ def plot(pivot, title, xlabel, ylabel, file_name, colorbar_label="time (s)"):
     plt.close()
 
 pivot_shared = df_shared.pivot(columns="block_size_x", index="block_size_y", values="time")
-plot(pivot_shared, "shared_memory", "block_size_x", "block_size_y", "plot_shared_memory.png", "Exec-time (ms)")
+plot(pivot_shared, "shared_memory", "block_size_x", "block_size_y", "plot_shared_memory.svg", "Exec-time (ms)")
 
 pivot_naive = df_naive.pivot(columns="block_size_x", index="block_size_y", values="time")
-plot(pivot_naive, "naive", "block_size_x", "block_size_y", "plot_naive.png", "Exec-time (ms)")
+plot(pivot_naive, "naive", "block_size_x", "block_size_y", "plot_naive.svg", "Exec-time (ms)")
 
 speedup = pivot_naive / pivot_shared
-plot(speedup, "speedup", "block_size_x", "block_size_y", "plot_speedup.png", "Speedup")
+plot(speedup, "speedup", "block_size_x", "block_size_y", "plot_speedup.svg", "Speedup")

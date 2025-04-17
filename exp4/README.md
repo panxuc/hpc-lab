@@ -4,15 +4,15 @@
 
 不使用 shared memory 的情况下，程序完成计算所需的时间（单位：ms）：
 
-![](plot_naive.png)
+![](plot_naive.svg)
 
 使用 shared memory 的情况下，程序完成计算所需的时间（单位：ms）：
 
-![](plot_shared_memory.png)
+![](plot_shared_memory.svg)
 
 二者的加速比：
 
-![](plot_speedup.png)
+![](plot_speedup.svg)
 
 ## 分析
 
