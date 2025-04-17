@@ -1,0 +1,71 @@
+bitwidth:  2
+stride:    1
+bandwidth: 4303.43
+
+bitwidth:  2
+stride:    2
+bandwidth: 4303.47
+
+bitwidth:  2
+stride:    4
+bandwidth: 2159.44
+
+bitwidth:  2
+stride:    8
+bandwidth: 829.708
+
+bitwidth:  2
+stride:    16
+bandwidth: 427.461
+
+bitwidth:  2
+stride:    32
+bandwidth: 215.888
+
+bitwidth:  4
+stride:    1
+bandwidth: 8605.84
+
+bitwidth:  4
+stride:    2
+bandwidth: 4318.84
+
+bitwidth:  4
+stride:    4
+bandwidth: 2032.42
+
+bitwidth:  4
+stride:    8
+bandwidth: 1013.33
+
+bitwidth:  4
+stride:    16
+bandwidth: 511.083
+
+bitwidth:  4
+stride:    32
+bandwidth: 250.972
+
+bitwidth:  8
+stride:    1
+bandwidth: 8657.84
+
+bitwidth:  8
+stride:    2
+bandwidth: 4339.36
+
+bitwidth:  8
+stride:    4
+bandwidth: 2173.55
+
+bitwidth:  8
+stride:    8
+bandwidth: 1087.66
+
+bitwidth:  8
+stride:    16
+bandwidth: 544.068
+
+bitwidth:  8
+stride:    32
+bandwidth: 544.07
