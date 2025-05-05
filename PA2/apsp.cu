@@ -5,158 +5,127 @@
 #include "apsp.h"
 
 #define BLOCK_SIZE 32
-#define OFFSET (BLOCK_SIZE * BLOCK_SIZE)
 #define BATCH_SIZE_PHASE2 6
 #define BATCH_SIZE_PHASE3 6
-
-namespace {
+#define MAX_VAL (INT_MAX / 2)
 
 __global__ void phase1(int n, int k, int *graph) {
-    __shared__ int shared[BLOCK_SIZE][BLOCK_SIZE];
-    int x = threadIdx.x;
-    int y = threadIdx.y;
-    int i = k * BLOCK_SIZE + y;
-    int j = k * BLOCK_SIZE + x;
+  __shared__ int shared[BLOCK_SIZE][BLOCK_SIZE];
+  int x = threadIdx.x;
+  int y = threadIdx.y;
+  int i = k * BLOCK_SIZE + y;
+  int j = k * BLOCK_SIZE + x;
 
-    if (i < n && j < n)
-        shared[y][x] = graph[i * n + j];
-    else
-        shared[y][x] = INT_MAX / 2;
-    __syncthreads();
+  shared[y][x] = (i < n && j < n) ? graph[i * n + j] : MAX_VAL;
+  __syncthreads();
 
-    int reg_shared_yx = shared[y][x];
+  if (i < n && j < n) {
+    int val = shared[y][x];
     for (int k = 0; k < BLOCK_SIZE; ++k) {
-        int val = shared[y][k] + shared[k][x];
-        if (val < reg_shared_yx)
-            reg_shared_yx = val;
+      val = min(val, shared[y][k] + shared[k][x]);
     }
-    shared[y][x] = reg_shared_yx;
-
-    if (i < n && j < n)
-        graph[i * n + j] = shared[y][x];
+    graph[i * n + j] = val;
+  }
 }
 
 __global__ void phase2(int n, int k, int *graph) {
-    __shared__ int shared_pivot[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ int shared_block[BLOCK_SIZE][BLOCK_SIZE];
+  __shared__ int shared_pivot[BLOCK_SIZE][BLOCK_SIZE];
+  __shared__ int shared_block[BATCH_SIZE_PHASE2][BLOCK_SIZE][BLOCK_SIZE];
 
-    int x = threadIdx.x;
-    int y = threadIdx.y;
-    int bidx = blockIdx.x;
-    if (bidx == k) return;
+  int x = threadIdx.x;
+  int y = threadIdx.y;
+  int bidx = blockIdx.x;
+  int bidy = blockIdx.y;
 
-    // Process row blocks
-    int i = k * BLOCK_SIZE + y;
-    int j = bidx * BLOCK_SIZE + x;
-    if (i < n && j < n)
-        shared_block[y][x] = graph[i * n + j];
-    else
-        shared_block[y][x] = INT_MAX / 2;
+  int pivot_i = k * BLOCK_SIZE + y;
+  int pivot_j = k * BLOCK_SIZE + x;
 
-    int pivot_i = k * BLOCK_SIZE + y;
-    int pivot_j = k * BLOCK_SIZE + x;
-    if (pivot_i < n && pivot_j < n)
-        shared_pivot[y][x] = graph[pivot_i * n + pivot_j];
-    else
-        shared_pivot[y][x] = INT_MAX / 2;
+  shared_pivot[y][x] =
+      (pivot_i < n && pivot_j < n) ? graph[pivot_i * n + pivot_j] : MAX_VAL;
+  __syncthreads();
 
-    __syncthreads();
+  bool is_row = (bidy == 0);
+  int block_base_i = is_row ? k : bidx * BATCH_SIZE_PHASE2;
+  int block_base_j = is_row ? bidx * BATCH_SIZE_PHASE2 : k;
 
-    for (int k = 0; k < BLOCK_SIZE; ++k) {
-        int val = shared_pivot[y][k] + shared_block[k][x];
-        if (val < shared_block[y][x])
-            shared_block[y][x] = val;
-        __syncthreads();
+  for (int p = 0; p < BATCH_SIZE_PHASE2; p++) {
+    int block_i = block_base_i + (is_row ? 0 : p);
+    int block_j = block_base_j + (is_row ? p : 0);
+    // if ((is_row && block_j == k) || (!is_row && block_i == k))
+    //   continue;
+    int i = block_i * BLOCK_SIZE + y;
+    int j = block_j * BLOCK_SIZE + x;
+    shared_block[p][y][x] = (i < n && j < n) ? graph[i * n + j] : MAX_VAL;
+  }
+  __syncthreads();
+  for (int p = 0; p < BATCH_SIZE_PHASE2; p++) {
+    int block_i = block_base_i + (is_row ? 0 : p);
+    int block_j = block_base_j + (is_row ? p : 0);
+    // if ((is_row && block_j == k) || (!is_row && block_i == k))
+    //   continue;
+    int i = block_i * BLOCK_SIZE + y;
+    int j = block_j * BLOCK_SIZE + x;
+    if (i < n && j < n) {
+      int val = shared_block[p][y][x];
+      for (int l = 0; l < BLOCK_SIZE; ++l) {
+        val = min(val, is_row ? shared_pivot[y][l] + shared_block[p][l][x]
+                              : shared_pivot[l][x] + shared_block[p][y][l]);
+      }
+      graph[i * n + j] = val;
     }
-
-    if (i < n && j < n)
-        graph[i * n + j] = shared_block[y][x];
-
-    // Process column blocks
-    i = bidx * BLOCK_SIZE + y;
-    j = k * BLOCK_SIZE + x;
-    if (i < n && j < n)
-        shared_block[y][x] = graph[i * n + j];
-    else
-        shared_block[y][x] = INT_MAX / 2;
-
-    pivot_i = k * BLOCK_SIZE + y;
-    pivot_j = k * BLOCK_SIZE + x;
-    if (pivot_i < n && pivot_j < n)
-        shared_pivot[y][x] = graph[pivot_i * n + pivot_j];
-    else
-        shared_pivot[y][x] = INT_MAX / 2;
-
-    __syncthreads();
-
-    for (int k = 0; k < BLOCK_SIZE; ++k) {
-        int val = shared_block[y][k] + shared_pivot[k][x];
-        if (val < shared_block[y][x])
-            shared_block[y][x] = val;
-        __syncthreads();
-    }
-
-    if (i < n && j < n)
-        graph[i * n + j] = shared_block[y][x];
+  }
 }
 
 __global__ void phase3(int n, int k, int *graph) {
-    __shared__ int shared_row[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ int shared_col[BLOCK_SIZE][BLOCK_SIZE];
+  __shared__ int shared_row[BATCH_SIZE_PHASE3][BLOCK_SIZE][BLOCK_SIZE];
+  __shared__ int shared_col[BATCH_SIZE_PHASE3][BLOCK_SIZE][BLOCK_SIZE];
 
-    int x = threadIdx.x;
-    int y = threadIdx.y;
-    int block_i = blockIdx.y;
-    int block_j = blockIdx.x;
+  int x = threadIdx.x;
+  int y = threadIdx.y;
+  int batch_i = blockIdx.y * BATCH_SIZE_PHASE3;
+  int batch_j = blockIdx.x * BATCH_SIZE_PHASE3;
+  int kk = k * BLOCK_SIZE;
 
-    if (block_i == k || block_j == k) return;
+  for (int p = 0; p < BATCH_SIZE_PHASE3; p++) {
+    int row_i = (batch_i + p) * BLOCK_SIZE + y;
+    int row_j = kk + x;
+    shared_row[p][y][x] =
+        (row_i < n && row_j < n) ? graph[row_i * n + row_j] : MAX_VAL;
 
-    int i = block_i * BLOCK_SIZE + y;
-    int j = block_j * BLOCK_SIZE + x;
+    int col_i = kk + y;
+    int col_j = (batch_j + p) * BLOCK_SIZE + x;
+    shared_col[p][y][x] =
+        (col_i < n && col_j < n) ? graph[col_i * n + col_j] : MAX_VAL;
+  }
+  __syncthreads();
 
-    int row_i = block_i * BLOCK_SIZE + y;
-    int row_j = k * BLOCK_SIZE + x;
+  for (int p = 0; p < BATCH_SIZE_PHASE3; p++) {
+    for (int q = 0; q < BATCH_SIZE_PHASE3; q++) {
+      int i = (batch_i + p) * BLOCK_SIZE + y;
+      int j = (batch_j + q) * BLOCK_SIZE + x;
 
-    int col_i = k * BLOCK_SIZE + y;
-    int col_j = block_j * BLOCK_SIZE + x;
-
-    if (row_i < n && row_j < n)
-        shared_row[y][x] = graph[row_i * n + row_j];
-    else
-        shared_row[y][x] = INT_MAX / 2;
-
-    if (col_i < n && col_j < n)
-        shared_col[y][x] = graph[col_i * n + col_j];
-    else
-        shared_col[y][x] = INT_MAX / 2;
-
-    __syncthreads();
-
-    int dist = (i < n && j < n) ? graph[i * n + j] : INT_MAX / 2;
-
-    for (int k = 0; k < BLOCK_SIZE; ++k) {
-        dist = min(dist, shared_row[y][k] + shared_col[k][x]);
+      if (i < n && j < n) {
+        int val = graph[i * n + j];
+        for (int l = 0; l < BLOCK_SIZE; ++l) {
+          val = min(val, shared_row[p][y][l] + shared_col[q][l][x]);
+        }
+        graph[i * n + j] = val;
+      }
     }
-
-    if (i < n && j < n)
-        graph[i * n + j] = dist;
-}
-
+  }
 }
 
 void apsp(int n, /* device */ int *graph) {
-    int rounds = (n - 1) / BLOCK_SIZE + 1;
-    // int rounds_phase2 = (n - 1) / (BLOCK_SIZE * BATCH_SIZE_PHASE2) + 1;
-    // int rounds_phase3 = (n - 1) / (BLOCK_SIZE * BATCH_SIZE_PHASE3) + 1;
-    dim3 thr(BLOCK_SIZE, BLOCK_SIZE);
-    // dim3 blk_phase2(rounds_phase2, 2);
-    // dim3 blk_phase3(rounds_phase3, rounds_phase3);
-    dim3 blk_phase2(rounds);
-    dim3 blk_phase3(rounds, rounds);
+  int rounds = (n - 1) / BLOCK_SIZE + 1;
+  int rounds_phase2 = (n - 1) / (BLOCK_SIZE * BATCH_SIZE_PHASE2) + 1;
+  int rounds_phase3 = (n - 1) / (BLOCK_SIZE * BATCH_SIZE_PHASE3) + 1;
+  dim3 thr(BLOCK_SIZE, BLOCK_SIZE);
+  dim3 blk_phase2(rounds_phase2, 2);
+  dim3 blk_phase3(rounds_phase3, rounds_phase3);
 
-    for (int k = 0; k < rounds; ++k) {
-        phase1<<<1, thr>>>(n, k, graph);
-        phase2<<<blk_phase2, thr>>>(n, k, graph);
-        phase3<<<blk_phase3, thr>>>(n, k, graph);
-    }
+  for (int k = 0; k < rounds; ++k) {
+    phase1<<<1, thr>>>(n, k, graph);
+    phase2<<<blk_phase2, thr>>>(n, k, graph);
+    phase3<<<blk_phase3, thr>>>(n, k, graph);
+  }
 }
