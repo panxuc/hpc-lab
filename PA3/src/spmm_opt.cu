@@ -1,33 +1,40 @@
 #include "spmm_opt.h"
 
+#define WARP_SIZE 32
+
 __global__ void spmm_kernel_opt(int *ptr, int *idx, float *val, float *vin,
                                 float *vout, int num_v, int INFEATURE) {
-  int row = blockIdx.x * blockDim.y + threadIdx.y; // one warp per row
-  int lane = threadIdx.x;                          // thread in warp
+  __shared__ int shared_idx[WARP_SIZE];
+  __shared__ float shared_val[WARP_SIZE];
+  int row = blockIdx.x;
+  int col = blockIdx.y * WARP_SIZE + threadIdx.y;
   if (row >= num_v)
     return;
 
   int row_start = ptr[row];
   int row_end = ptr[row + 1];
 
-  for (int j = lane; j < INFEATURE; j += 32) {
-    float sum = 0.0f;
-    for (int i = row_start; i < row_end; ++i) {
-      int col = idx[i];
-      if (col >= 0 && col < num_v)
-        sum += val[i] * vin[col * INFEATURE + j];
+  float sum = 0;
+
+  for (int i = row_start; i < row_end; i += WARP_SIZE) {
+    int p = i + threadIdx.y;
+    if (p < row_end) {
+      shared_idx[threadIdx.y] = idx[p];
+      shared_val[threadIdx.y] = val[p];
     }
-    // warp-level reduction (optional, since each thread handles different j)
-    vout[row * INFEATURE + j] = sum;
+    __syncthreads();
+    for (int j = 0; j < min(WARP_SIZE, row_end - i); j++) {
+      sum += shared_val[j] * vin[shared_idx[j] * INFEATURE + col];
+    }
   }
+  vout[row * INFEATURE + col] = sum;
 }
 
 void SpMMOpt::preprocess(float *vin, float *vout) {
-  int WARPS_PER_BLOCK = 4;
-  int THREADS_PER_WARP = 32;
-  block.x = THREADS_PER_WARP;
-  block.y = WARPS_PER_BLOCK;
-  grid.x = (num_v + WARPS_PER_BLOCK - 1) / WARPS_PER_BLOCK;
+  block.x = 1;
+  block.y = WARP_SIZE;
+  grid.x = num_v;
+  grid.y = (feat_in - 1) / WARP_SIZE + 1;
 }
 
 void SpMMOpt::run(float *vin, float *vout) {
