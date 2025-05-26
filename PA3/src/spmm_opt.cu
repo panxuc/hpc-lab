@@ -1,26 +1,5 @@
 #include "spmm_opt.h"
 
-#define WARP_SIZE 32
-#define SLICE_SIZE 256
-
-bool slice = false;
-int *d_rows = nullptr, *d_starts = nullptr, *d_ends = nullptr;
-int num_slice = 0;
-
-#define NUMV_ARXIV 169343
-#define NUMV_COLLAB 235868
-#define NUMV_CITATION 2927963
-#define NUMV_DDI 4267
-#define NUMV_PROTEIN 132534
-#define NUMV_PPA 576289
-#define NUMV_REDDIT_DGL 232965
-#define NUMV_PRODUCTS 2449029
-#define NUMV_YOUTUBE 1138499
-#define NUMV_AMAZON_COGDL 1569960
-#define NUMV_YELP 716847
-#define NUMV_WIKIKG2 2500604
-#define NUMV_AM 881680
-
 __global__ void spmm_kernel_opt(int *ptr, int *idx, float *val, float *vin,
                                 float *vout, int num_v, int INFEATURE) {
   __shared__ int shared_idx[WARP_SIZE];
@@ -36,10 +15,9 @@ __global__ void spmm_kernel_opt(int *ptr, int *idx, float *val, float *vin,
   float sum = 0;
 
   for (int i = start; i < end; i += WARP_SIZE) {
-    int p = i + threadIdx.y;
-    if (p < end) {
-      shared_idx[threadIdx.y] = idx[p];
-      shared_val[threadIdx.y] = val[p];
+    if (i + threadIdx.y < end) {
+      shared_idx[threadIdx.y] = idx[i + threadIdx.y];
+      shared_val[threadIdx.y] = val[i + threadIdx.y];
     }
     __syncthreads();
     for (int j = 0; j < min(WARP_SIZE, end - i); j++) {
@@ -47,6 +25,36 @@ __global__ void spmm_kernel_opt(int *ptr, int *idx, float *val, float *vin,
     }
   }
   vout[row * INFEATURE + col] = sum;
+}
+
+__global__ void spmm_kernel_opt_2x(int *ptr, int *idx, float *val, float *vin,
+                                   float *vout, int num_v, int INFEATURE) {
+  __shared__ int shared_idx[WARP_SIZE];
+  __shared__ float shared_val[WARP_SIZE];
+  int row = blockIdx.x;
+  int col = blockIdx.y * WARP_SIZE * 2 + threadIdx.y;
+  if (row >= num_v)
+    return;
+
+  int start = ptr[row];
+  int end = ptr[row + 1];
+
+  float sum0 = 0;
+  float sum1 = 0;
+
+  for (int i = start; i < end; i += WARP_SIZE) {
+    if (i + threadIdx.y < end) {
+      shared_idx[threadIdx.y] = idx[i + threadIdx.y];
+      shared_val[threadIdx.y] = val[i + threadIdx.y];
+    }
+    __syncthreads();
+    for (int j = 0; j < min(WARP_SIZE, end - i); j++) {
+      sum0 += shared_val[j] * vin[shared_idx[j] * INFEATURE + col];
+      sum1 += shared_val[j] * vin[shared_idx[j] * INFEATURE + col + WARP_SIZE];
+    }
+  }
+  vout[row * INFEATURE + col] = sum0;
+  vout[row * INFEATURE + col + WARP_SIZE] = sum1;
 }
 
 __global__ void spmm_kernel_opt_s(int *ptr, int *idx, float *val, float *vin,
@@ -67,38 +75,112 @@ __global__ void spmm_kernel_opt_s(int *ptr, int *idx, float *val, float *vin,
   float sum = 0;
 
   for (int i = start; i < end; i += WARP_SIZE) {
-    int p = i + threadIdx.y;
-    if (p < end) {
-      shared_idx[threadIdx.y] = idx[p];
-      shared_val[threadIdx.y] = val[p];
+    if (i + threadIdx.y < end) {
+      shared_idx[threadIdx.y] = idx[i + threadIdx.y];
+      shared_val[threadIdx.y] = val[i + threadIdx.y];
     }
     __syncthreads();
     for (int j = 0; j < min(WARP_SIZE, end - i); j++) {
       sum += shared_val[j] * vin[shared_idx[j] * INFEATURE + col];
     }
   }
-  atomicAdd(&(vout[row * INFEATURE + col]), sum);
+  atomicAdd(&vout[row * INFEATURE + col], sum);
+}
+
+__global__ void spmm_kernel_opt_s_2x(int *ptr, int *idx, float *val, float *vin,
+                                     float *vout, int num_v, int INFEATURE,
+                                     int *rows, int *starts, int *ends) {
+  __shared__ int shared_idx[WARP_SIZE];
+  __shared__ float shared_val[WARP_SIZE];
+
+  int id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id >= num_v)
+    return;
+
+  int row = rows[id];
+  int col = blockIdx.y * WARP_SIZE * 2 + threadIdx.y;
+  int start = starts[id];
+  int end = ends[id];
+
+  float sum0 = 0;
+  float sum1 = 0;
+
+  for (int i = start; i < end; i += WARP_SIZE) {
+    if (i + threadIdx.y < end) {
+      shared_idx[threadIdx.y] = idx[i + threadIdx.y];
+      shared_val[threadIdx.y] = val[i + threadIdx.y];
+    }
+    __syncthreads();
+    for (int j = 0; j < min(WARP_SIZE, end - i); j++) {
+      sum0 += shared_val[j] * vin[shared_idx[j] * INFEATURE + col];
+      sum1 += shared_val[j] * vin[shared_idx[j] * INFEATURE + col + WARP_SIZE];
+    }
+  }
+  atomicAdd(&vout[row * INFEATURE + col], sum0);
+  atomicAdd(&vout[row * INFEATURE + col + WARP_SIZE], sum1);
 }
 
 void SpMMOpt::preprocess(float *vin, float *vout) {
+  if (feat_in == 32) {
+    speedup = 1;
+    if (num_v == NUMV_COLLAB || num_v == NUMV_CITATION ||
+        num_v == NUMV_PRODUCTS || num_v == NUMV_WIKIKG2) {
+      slice = false;
+    } else {
+      slice = true;
+    }
+  } else if (feat_in == 256) {
+    switch (num_v) {
+    case NUMV_PROTEIN:
+      speedup = 1;
+      slice = false;
+      break;
+    case NUMV_REDDIT_DGL:
+    case NUMV_AMAZON_COGDL:
+      speedup = 1;
+      slice = true;
+      break;
+    case NUMV_COLLAB:
+    case NUMV_CITATION:
+    case NUMV_PPA:
+    case NUMV_PRODUCTS:
+    case NUMV_YOUTUBE:
+    case NUMV_YELP:
+    case NUMV_WIKIKG2:
+      speedup = 2;
+      slice = false;
+      break;
+    case NUMV_ARXIV:
+    case NUMV_DDI:
+    case NUMV_AM:
+      speedup = 2;
+      slice = true;
+      break;
+    default:
+      speedup = 2;
+      slice = false;
+      break;
+    }
+  } else {
+    speedup = 1;
+    slice = false;
+  }
   block.x = 1;
   block.y = WARP_SIZE;
-  grid.y = (feat_in + WARP_SIZE - 1) / WARP_SIZE;
-  if (num_v == NUMV_COLLAB || num_v == NUMV_CITATION ||
-      num_v == NUMV_PRODUCTS || num_v == NUMV_WIKIKG2) {
+  grid.y = (feat_in + WARP_SIZE * speedup - 1) / (WARP_SIZE * speedup);
+  if (!slice) {
     grid.x = num_v;
-    slice = false;
   } else {
     int *h_ptr = new int[num_v + 1];
     checkCudaErrors(cudaMemcpy(h_ptr, d_ptr, (num_v + 1) * sizeof(int),
                                cudaMemcpyDeviceToHost));
-    num_slice = 0;
+    num_s = 0;
     for (int i = 0; i < num_v; i++) {
-      num_slice += (h_ptr[i + 1] - h_ptr[i] + SLICE_SIZE - 1) / SLICE_SIZE;
+      num_s += (h_ptr[i + 1] - h_ptr[i] + SLICE_SIZE - 1) / SLICE_SIZE;
     }
-    int *h_rows = new int[num_slice];
-    int *h_starts = new int[num_slice];
-    int *h_ends = new int[num_slice];
+    int *h_rows = new int[num_s];
+    int *h_starts = new int[num_s];
+    int *h_ends = new int[num_s];
     int idx = 0;
     for (int i = 0; i < num_v; i++) {
       int start = h_ptr[i];
@@ -110,29 +192,36 @@ void SpMMOpt::preprocess(float *vin, float *vout) {
         idx++;
       }
     }
-    checkCudaErrors(cudaMalloc(&d_rows, num_slice * sizeof(int)));
-    checkCudaErrors(cudaMalloc(&d_starts, num_slice * sizeof(int)));
-    checkCudaErrors(cudaMalloc(&d_ends, num_slice * sizeof(int)));
-    checkCudaErrors(cudaMemcpy(d_rows, h_rows, num_slice * sizeof(int),
+    checkCudaErrors(cudaMalloc(&d_rows, num_s * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_starts, num_s * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_ends, num_s * sizeof(int)));
+    checkCudaErrors(cudaMemcpy(d_rows, h_rows, num_s * sizeof(int),
                                cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(d_starts, h_starts, num_slice * sizeof(int),
+    checkCudaErrors(cudaMemcpy(d_starts, h_starts, num_s * sizeof(int),
                                cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(d_ends, h_ends, num_slice * sizeof(int),
+    checkCudaErrors(cudaMemcpy(d_ends, h_ends, num_s * sizeof(int),
                                cudaMemcpyHostToDevice));
-    grid.x = num_slice;
+    grid.x = num_s;
     delete[] h_ptr;
     delete[] h_rows;
     delete[] h_starts;
     delete[] h_ends;
-    slice = true;
   }
 }
 
 void SpMMOpt::run(float *vin, float *vout) {
-  if (slice) {
-    spmm_kernel_opt_s<<<grid, block>>>(d_ptr, d_idx, d_val, vin, vout,
-                                       num_slice, feat_in, d_rows, d_starts,
-                                       d_ends);
+  if (speedup == 1 && !slice) {
+    spmm_kernel_opt<<<grid, block>>>(d_ptr, d_idx, d_val, vin, vout, num_v,
+                                     feat_in);
+  } else if (speedup == 2 && !slice) {
+    spmm_kernel_opt_2x<<<grid, block>>>(d_ptr, d_idx, d_val, vin, vout, num_v,
+                                        feat_in);
+  } else if (speedup == 1 && slice) {
+    spmm_kernel_opt_s<<<grid, block>>>(d_ptr, d_idx, d_val, vin, vout, num_s,
+                                       feat_in, d_rows, d_starts, d_ends);
+  } else if (speedup == 2 && slice) {
+    spmm_kernel_opt_s_2x<<<grid, block>>>(d_ptr, d_idx, d_val, vin, vout, num_s,
+                                          feat_in, d_rows, d_starts, d_ends);
   } else {
     spmm_kernel_opt<<<grid, block>>>(d_ptr, d_idx, d_val, vin, vout, num_v,
                                      feat_in);
